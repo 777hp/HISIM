@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import csv
 import math
 import sys
-from typing import Optional
+from os import PathLike
+from typing import Mapping, Optional, Union
 
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -19,9 +22,6 @@ from Module_AI_Map.util_chip.layout import ChipletLayout
 current_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(current_dir)
 target_file_path = os.path.join(parent_dir, 'AI_Networks')
-
-print("target: ", target_file_path)
-print("vit: ", f'{target_file_path}/GCN/VIT_base.csv')
 
 def smallest_square_greater_than(n):
     square_root = math.ceil(math.sqrt(n))
@@ -60,7 +60,7 @@ def model_mapping(
     N_tile,
     N_tier,
     N_stack,
-    layout: Optional[ChipletLayout] = None,
+    layout: Optional[Union[ChipletLayout, Mapping[str, object], str, PathLike]] = None,
 ):
     #---------------------------------------------------------------------#
 
@@ -73,10 +73,23 @@ def model_mapping(
     total_number_layers=network_params.shape[0]
     tile_x_bit=xbar_size*math.sqrt(N_crossbar)*math.sqrt(N_pe)   #Total number of bits in a tile in x-dimension
     tile_y_bit=xbar_size*math.sqrt(N_crossbar)*math.sqrt(N_pe)   #Total number of bits in a tile in y-dimension
-    if layout is None:
-        layout = ChipletLayout.uniform(
+    if isinstance(layout, ChipletLayout) or layout is None:
+        layout_obj = layout
+    elif isinstance(layout, Mapping):
+        layout_obj = ChipletLayout.from_dict(layout)
+    elif isinstance(layout, (str, PathLike)):
+        layout_obj = ChipletLayout.from_json(layout)
+    else:
+        raise TypeError(
+            "layout must be a ChipletLayout, mapping, or path to a JSON layout description"
+        )
+
+    if layout_obj is None:
+        layout_obj = ChipletLayout.uniform(
             num_stacks=N_stack, num_tiers=N_tier, tiles_per_tier=N_tile
         )
+
+    layout = layout_obj
 
     util_map_fn = util_map(
         N_tile=N_tile,

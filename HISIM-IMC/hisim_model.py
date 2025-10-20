@@ -47,7 +47,8 @@ import csv
 import time
 import argparse
 import sys
-from typing import Optional
+from os import PathLike
+from typing import Mapping, Optional, Union
 from Module_Compute.functions import imc_analy
 from Module_Thermal.thermal_model import thermal_model
 from Module_Network.network_model import network_model
@@ -96,7 +97,7 @@ class HiSimModel:
         thermal = True,                 # | run thermal simulation
         N_stack=1,               #int      |Number of 3D stacks in 3.5D design           -1, 2,3,4,5,6,7,8,9,10 
         ppa_filepath = "./Results/PPA.csv",
-        chiplet_layout: Optional[ChipletLayout] = None,
+        chiplet_layout: Optional[Union[ChipletLayout, Mapping[str, object], str, PathLike]] = None,
     ):
         if chip_architect == "H2_5D":
             self.placement_method = 1
@@ -134,7 +135,22 @@ class HiSimModel:
         self.ai_model = ai_model
         self.thermal = thermal
         self.filename_results = ppa_filepath
-        self.chiplet_layout = chiplet_layout
+        if isinstance(chiplet_layout, ChipletLayout) or chiplet_layout is None:
+            layout_obj = chiplet_layout
+        elif isinstance(chiplet_layout, Mapping):
+            layout_obj = ChipletLayout.from_dict(chiplet_layout)
+        elif isinstance(chiplet_layout, (str, PathLike)):
+            layout_obj = ChipletLayout.from_json(chiplet_layout)
+        else:
+            raise TypeError(
+                "chiplet_layout must be a ChipletLayout, mapping, or path to a JSON layout"
+            )
+
+        if layout_obj is not None:
+            self.N_stack = layout_obj.stack_count()
+            self.N_tier = layout_obj.tier_count()
+
+        self.chiplet_layout = layout_obj
         
         self.csv_header = [
                                 'freq_core (GHz)',

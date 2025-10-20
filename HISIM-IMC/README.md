@@ -168,6 +168,19 @@ Alternatively, To run a 3_5D simulation, apply the following settings:
 -- Check Results/PPA.csv for PPA information and Results/tile_map.png for tile mapping information
 ```
 
+### 支持异构芯粒布局（TAP 联合使用）
+自 v1.1 起，HiSim 新增了 `ChipletLayout` 抽象来描述每个堆栈、每一层芯粒的行列尺寸与原点坐标，从而能够与 [TAP-2.5D](https://github.com/777hp/TAP-2.5D) 等外部工具协同工作。主要特性如下：
+
+* **外部布局输入**：在 `HiSimModel` 初始化或 `model_mapping` 函数中可以直接传入 `ChipletLayout` 对象、JSON 文件路径，或与 `layout.to_dict()` 等价的字典。这样 TAP 输出的 JSON 即可无缝导入。
+* **任意芯粒尺寸**：每个 tier 的 `rows`、`cols`、`origin_row`、`origin_col` 可以独立配置，HiSim 会自动根据实际容量限制映射过程并返回各层实际占用的 tile 数。
+* **贯穿式使用**：映射、计算、网络和面积模型均改写为基于真实布局统计容量、面积及连线长度，确保 3D/2.5D/3.5D 结果与 TAP 的热仿真输入一致。
+
+典型工作流为：
+
+1. 在 TAP 中完成热仿真/布局优化，导出包含 `stacks -> tiers -> {rows, cols, origin_row, origin_col}` 的 JSON。
+2. 在 HiSim 中通过 `HiSimModel(chiplet_layout="path/to/layout.json")` 或 `model_mapping(..., layout="path/to/layout.json")` 传入该文件。
+3. 运行 HiSim，`Results/tile_map.png` 会展示映射后的异构芯粒占用情况，同时 `compute_area`、`chip area`、`network_latency` 等指标将基于真实布局计算。
+
 ### Workflow
 The workflow of the codes is as follows: The AI model is first mapped onto the architecture using the default mapping in util_mapping.py located in the Module_AI_Map folder. This process outputs layer_information.csv in the following format:
 ```

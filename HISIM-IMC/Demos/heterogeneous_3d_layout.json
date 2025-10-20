@@ -1,0 +1,12 @@
+{
+  "stacks": [
+    [
+      {"rows": 10, "cols": 10, "origin_row": 0, "origin_col": 0},
+      {"rows": 8, "cols": 12, "origin_row": 0, "origin_col": 12}
+    ],
+    [
+      {"rows": 9, "cols": 11, "origin_row": 12, "origin_col": 0},
+      {"rows": 10, "cols": 10, "origin_row": 12, "origin_col": 12}
+    ]
+  ]
+}

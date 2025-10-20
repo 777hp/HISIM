@@ -23,15 +23,18 @@ def network_model(N_tier_real, N_stack_real, layout: Optional[ChipletLayout], co
         inferred_capacity = inferred_capacity or 1
         layout = ChipletLayout.uniform(N_stack_real, N_tier_real, inferred_capacity)
     tier_capacity = {}
-    mesh_edge = 0
     for stack_index in range(N_stack_real):
         for tier_index in range(chiplet_num):
             rows, cols = layout.tier_shape(stack_index, tier_index)
             tier_capacity[(stack_index, tier_index)] = rows * cols
-            mesh_edge = max(mesh_edge, rows, cols)
+
+    mesh_rows, mesh_cols = layout.global_shape()
+    mesh_edge = max(mesh_rows, mesh_cols)
 
     max_capacity = max(tier_capacity.values()) if tier_capacity else 0
     total_tile_capacity = sum(tier_capacity.values())
+    if mesh_edge == 0 and total_tile_capacity:
+        mesh_edge = 1
 
     total_tile=0
     layer_start_tile=0
@@ -222,19 +225,25 @@ def network_model(N_tier_real, N_stack_real, layout: Optional[ChipletLayout], co
         channel_width=4/5*W2d+1/5*W3d_assume # mix 2d and 3d
         total_router_area,_,_=power_summary_router(channel_width,6,6,hop3d,trc,tva,tsa,tst,tl,tenq,Q_3d,int(chiplet_num),int(mesh_edge))
     elif chip_architect=="M2D" or chip_architect=="H2_5D" or N_tier_real==1:
-        channel_width=W2d 
-        total_router_area,_,_=power_summary_router(channel_width,5,5,hop2d,trc,tva,tsa,tst,tl,tenq,Q_2d,int(chiplet_num),int(mesh_edge))  
-    single_router_area=total_router_area/(mesh_edge*mesh_edge*chiplet_num)
-    edge_single_router=math.sqrt(single_router_area)
-    edge_single_tile=math.sqrt(area_single_tile)
+        channel_width=W2d
+        total_router_area,_,_=power_summary_router(channel_width,5,5,hop2d,trc,tva,tsa,tst,tl,tenq,Q_2d,int(chiplet_num),int(mesh_edge))
+    if total_tile_capacity:
+        single_router_area=total_router_area/total_tile_capacity
+    else:
+        single_router_area=0
+    edge_single_router = math.sqrt(single_router_area) if single_router_area > 0 else 0
+    edge_single_tile = math.sqrt(area_single_tile) if area_single_tile > 0 else 0
 
     num_tsv_io=int(edge_single_router/tsvPitch*1000)*int(edge_single_router/tsvPitch*1000)*2
     W3d=num_tsv_io
     if (chip_architect=="M3D" or chip_architect=="M3_5D") and N_tier_real!=1:
         channel_width=4/5*W2d+1/5*W3d # mix 2d and 3d
         total_router_area,_,_=power_summary_router(channel_width,6,6,hop3d,trc,tva,tsa,tst,tl,tenq,Q_3d,int(chiplet_num),int(mesh_edge))
-    single_router_area=total_router_area/(mesh_edge*mesh_edge*chiplet_num)
-    edge_single_router=math.sqrt(single_router_area)
+    if total_tile_capacity:
+        single_router_area=total_router_area/total_tile_capacity
+    else:
+        single_router_area=0
+    edge_single_router = math.sqrt(single_router_area) if single_router_area > 0 else 0
     layer_aib_list=[]
     if (chip_architect=="H2_5D" or chip_architect=="M3_5D") and N_stack_real!=1:
         aib_out=[0,0,0]
@@ -253,7 +262,8 @@ def network_model(N_tier_real, N_stack_real, layout: Optional[ChipletLayout], co
     print("single router area",round(single_router_area,5),"mm2")
     print("edge length single router",round(edge_single_router,5),"mm") #mm
     print("edge length single tile",round(edge_single_tile,5),"mm") #mm
-    total_3d_area = (edge_single_router+edge_single_tile)*(edge_single_router+edge_single_tile)*total_tile_capacity
+    tile_pitch = edge_single_router + edge_single_tile
+    total_3d_area = tile_pitch * tile_pitch * total_tile_capacity
     print("total 3d stack area",round(total_3d_area,5),"mm2")
     print("2.5d area", round(area_2_5d,5))
     print("---------------------------------------------------------")
