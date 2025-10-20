@@ -1,59 +1,78 @@
 import math
+from typing import Optional
+
 import numpy as np
 from Module_Network.orion_power_area import power_summary_router
 from Module_Network.aib_2_5d import aib
 import matplotlib.pyplot as plt
 from Module_AI_Map.util_chip.util_mapping import create_tile
+from Module_AI_Map.util_chip.layout import ChipletLayout
 
-def network_model(N_tier_real, N_stack_real, N_tile,N_tier,computing_data,placement_method,percent_router,chip_architect,tsvPitch,
-                  area_single_tile,result_list,result_dictionary,volt,fclk_noc,total_model_L,scale_factor, tiles_each_tier, routing_method, W2d):
+
+def network_model(N_tier_real, N_stack_real, layout: Optional[ChipletLayout], computing_data, placement_method, percent_router, chip_architect, tsvPitch,
+                  area_single_tile, result_list, result_dictionary, volt, fclk_noc, total_model_L, scale_factor, tiles_each_tier, routing_method, W2d):
     # Network,3D NoC
     # area,latency,power
 
     #---------------------------------------------------------------------#
-    chiplet_num=N_tier_real
-    mesh_edge=int(math.sqrt(N_tile))
+    chiplet_num = N_tier_real
+    if layout is None:
+        inferred_capacity = 0
+        if tiles_each_tier:
+            inferred_capacity = max(max(row) for row in tiles_each_tier if row) if any(row for row in tiles_each_tier) else 0
+        inferred_capacity = inferred_capacity or 1
+        layout = ChipletLayout.uniform(N_stack_real, N_tier_real, inferred_capacity)
+    tier_capacity = {}
+    mesh_edge = 0
+    for stack_index in range(N_stack_real):
+        for tier_index in range(chiplet_num):
+            rows, cols = layout.tier_shape(stack_index, tier_index)
+            tier_capacity[(stack_index, tier_index)] = rows * cols
+            mesh_edge = max(mesh_edge, rows, cols)
+
+    max_capacity = max(tier_capacity.values()) if tier_capacity else 0
+    total_tile_capacity = sum(tier_capacity.values())
 
     total_tile=0
     layer_start_tile=0
-    layer_start_tile_tier=[[0]*N_tier_real]*N_stack_real
+    layer_start_tile_tier=[[0]*chiplet_num for _ in range(N_stack_real)]
     tile_total=[]
     count_tier=0
     # for decide (x,y)
     for layer_index in range(len(computing_data)):
+        stack_idx = int(computing_data[layer_index][15])
+        tier_idx = int(computing_data[layer_index][9])
+        serpentine = True
+        mirror = placement_method != 5 and tier_idx % 2 == 1
+
         if placement_method ==5:
             if computing_data[layer_index-1][15]!=computing_data[layer_index][15]:
                 count_tier=0
             if count_tier<N_tier_real:
-                layer_start_tile_tier[int(computing_data[layer_index][15])][int(computing_data[layer_index][9])]=0
+                layer_start_tile_tier[stack_idx][tier_idx]=0
                 count_tier+=1
-            layer_start_tile=layer_start_tile_tier[int(computing_data[layer_index][15])][int(computing_data[layer_index][9])]
+            layer_start_tile=layer_start_tile_tier[stack_idx][tier_idx]
         else:
-            if computing_data[layer_index][15]>=1 and computing_data[layer_index-1][15]!=computing_data[layer_index][15]:
+            if stack_idx>=1 and computing_data[layer_index-1][15]!=computing_data[layer_index][15]:
                 layer_start_tile=0
-            elif computing_data[layer_index][9]>=1 and computing_data[layer_index-1][9]!=computing_data[layer_index][9]:
+            elif tier_idx>=1 and computing_data[layer_index-1][9]!=computing_data[layer_index][9]:
                 layer_start_tile=0
-        # get this layer information 
+        # get this layer information
 
         layer_end_tile=layer_start_tile+int(computing_data[layer_index][1])-1
 
         tile_index = np.array([[0,0,0,0]])
         #import pdb;pdb.set_trace()
         for layer_tile_number in range(layer_start_tile,layer_end_tile+1):
-            
-            x_idx= int((layer_tile_number)//(mesh_edge))
-            #
-            y_idx= int((layer_tile_number)%(mesh_edge))
-            #
+            pos_row, pos_col = layout.position_from_index(
+                stack_idx,
+                tier_idx,
+                layer_tile_number,
+                serpentine=serpentine,
+                mirror=mirror,
+            )
 
-            if x_idx%2 == 1:
-                y_idx = mesh_edge - y_idx - 1
-
-            if placement_method != 5 and computing_data[layer_index][9]%2 == 1:
-                x_idx = mesh_edge - x_idx - 1
-                y_idx = mesh_edge - y_idx - 1
-        
-            tile_index = np.append(tile_index, [[x_idx, y_idx, int(computing_data[layer_index][9]),int(computing_data[layer_index][15])]],axis=0)
+            tile_index = np.append(tile_index, [[pos_row, pos_col, tier_idx, stack_idx]],axis=0)
         
         tile_index=tile_index[1:]
 
@@ -65,20 +84,31 @@ def network_model(N_tier_real, N_stack_real, N_tile,N_tier,computing_data,placem
         tile_index= np.append(tile_index,[[each_tile_activation_Q,each_tile_activation_Q,each_tile_activation_Q, each_tile_activation_Q]],axis=0)
         if placement_method==5:
             tile_total.append(tile_index)
-            layer_start_tile_tier[int(computing_data[layer_index][15])][int(computing_data[layer_index][9])]=layer_end_tile+1
+            layer_start_tile_tier[stack_idx][tier_idx]=layer_end_tile+1
             #import pdb;pdb.set_trace()
-        else:    
+        else:
             tile_total.append(tile_index)
             layer_start_tile=layer_end_tile+1
 
     empty_tile_total=[]
+    empty_tile_lookup={}
     for stack_index in range(N_stack_real):
         for tier_index in range(chiplet_num):
+            capacity = tier_capacity[(stack_index, tier_index)]
             tile_index = np.array([[0,0,0,0]])
-            for x in range(mesh_edge):
-                for y in range(mesh_edge):
-                    tile_index = np.append(tile_index, [[x, y, tier_index, stack_index]],axis=0)
+            serpentine = True
+            mirror = placement_method != 5 and tier_index % 2 == 1
+            for tile_offset in range(capacity):
+                pos_row, pos_col = layout.position_from_index(
+                    stack_index,
+                    tier_index,
+                    tile_offset,
+                    serpentine=serpentine,
+                    mirror=mirror,
+                )
+                tile_index = np.append(tile_index, [[pos_row, pos_col, tier_index, stack_index]],axis=0)
             tile_index=tile_index[1:]
+            empty_tile_lookup[(stack_index, tier_index)] = len(empty_tile_total)
             empty_tile_total.append(tile_index)
 
 
@@ -100,8 +130,11 @@ def network_model(N_tier_real, N_stack_real, N_tile,N_tier,computing_data,placem
         #print(tile_total[i])
         #print(tile_total[i+1])
         num_tiles_this_layer=len(tile_total[i])-1
-        num_tiles_left_this_layer=N_tile-num_tiles_this_layer
-        Q_3d_scatter=tile_total[i][-1][2]*num_tiles_this_layer/N_tile
+        current_stack = int(tile_total[i][0][3])
+        current_tier = int(tile_total[i][0][2])
+        current_capacity = tier_capacity[(current_stack, current_tier)]
+        num_tiles_left_this_layer=current_capacity-num_tiles_this_layer
+        Q_3d_scatter=tile_total[i][-1][2]*num_tiles_this_layer/current_capacity if current_capacity else 0
         layer_2d_hop=hop2d
         layer_3d_hop=hop3d
         
@@ -109,8 +142,9 @@ def network_model(N_tier_real, N_stack_real, N_tile,N_tier,computing_data,placem
             Q_2_5d+=(tile_total[i][-1][3])*(len(tile_total[i+1])-1)
             layer_Q_2_5d.append((tile_total[i][-1][3])*(len(tile_total[i+1])-1))
             for x in range(len(tile_total[i])-1):
-                #import pdb;pdb.set_trace()
-                hop2d+=(abs(tile_total[i][x][0]-empty_tile_total[tile_total[i][x][2]][-1][0])+1)*2
+                tier_key = (int(tile_total[i][x][3]), int(tile_total[i][x][2]))
+                empty_idx = empty_tile_lookup[tier_key]
+                hop2d+=(abs(tile_total[i][x][0]-empty_tile_total[empty_idx][-1][0])+1)*2
             Q_2d+=tile_total[i][-1][3]*(len(tile_total[i+1])-1)
             layer_Q.append(tile_total[i][-1][3]*(len(tile_total[i])-1))
             stack_index+=1
@@ -133,17 +167,18 @@ def network_model(N_tier_real, N_stack_real, N_tile,N_tier,computing_data,placem
                 for x in range(len(tile_total[i])-1):
                     for y in range(len(tile_total[i+1])-1):
                         hop2d+=abs(tile_total[i][x][0]-tile_total[i+1][y][0])+abs(tile_total[i][x][1]-tile_total[i+1][y][1])+1
-                        hop3d+=(abs(tile_total[i][x][2]-tile_total[i+1][y][2]))*N_tile*percent_router
+                        hop3d+=(abs(tile_total[i][x][2]-tile_total[i+1][y][2]))*current_capacity*percent_router
 
                 if tile_total[i][0][2]!=tile_total[i+1][0][2]:
                     for x in range(len(tile_total[i])-1):
-                        #import pdb;pdb.set_trace()
-                        for y in range(int(len(empty_tile_total[int(tile_total[i][x][2])])*percent_router)):
-                            hop2d+=(abs(tile_total[i][x][0]-empty_tile_total[int(tile_total[i][x][2])][y][0])+abs(tile_total[i][x][1]-empty_tile_total[int(tile_total[i][x][2])][y][1])+1)*2
-                    Q_3d+=int((tile_total[i][-1][2])*(len(tile_total[i+1])-1)/(N_tile*percent_router))
+                        tier_key = (int(tile_total[i][x][3]), int(tile_total[i][x][2]))
+                        empty_idx = empty_tile_lookup[tier_key]
+                        for y in range(int(len(empty_tile_total[empty_idx])*percent_router)):
+                            hop2d+=(abs(tile_total[i][x][0]-empty_tile_total[empty_idx][y][0])+abs(tile_total[i][x][1]-empty_tile_total[empty_idx][y][1])+1)*2
+                    Q_3d+=int((tile_total[i][-1][2])*(len(tile_total[i+1])-1)/(current_capacity*percent_router)) if current_capacity else 0
                     #import pdb;pdb.set_trace()
                     layer_Q.append((tile_total[i][-1][2])*(len(tile_total[i])-1))
-                    Q_2d+=int((tile_total[i][-1][2]*(len(tile_total[i])-1))/(N_tile*percent_router))
+                    Q_2d+=int((tile_total[i][-1][2]*(len(tile_total[i])-1))/(current_capacity*percent_router)) if current_capacity else 0
                     #import pdb;pdb.set_trace()
                 else:
                     Q_2d+=tile_total[i][-1][2]*(len(tile_total[i+1])-1)
@@ -218,12 +253,13 @@ def network_model(N_tier_real, N_stack_real, N_tile,N_tier,computing_data,placem
     print("single router area",round(single_router_area,5),"mm2")
     print("edge length single router",round(edge_single_router,5),"mm") #mm
     print("edge length single tile",round(edge_single_tile,5),"mm") #mm
-    print("total 3d stack area",round((edge_single_router+edge_single_tile)*(edge_single_router+edge_single_tile)*N_tile*N_stack_real,5),"mm2")
+    total_3d_area = (edge_single_router+edge_single_tile)*(edge_single_router+edge_single_tile)*total_tile_capacity
+    print("total 3d stack area",round(total_3d_area,5),"mm2")
     print("2.5d area", round(area_2_5d,5))
     print("---------------------------------------------------------")
 
-    result_list.append((edge_single_router+edge_single_tile)*(edge_single_router+edge_single_tile)*N_tile*N_stack_real+area_2_5d)
-    result_dictionary['chip area (mm2)'] = (edge_single_router+edge_single_tile)*(edge_single_router+edge_single_tile)*N_tile*N_stack_real+area_2_5d
+    result_list.append(total_3d_area+area_2_5d)
+    result_dictionary['chip area (mm2)'] = total_3d_area+area_2_5d
 
     result_list.insert(8,W2d)
     result_list.insert(9,W3d)
@@ -234,8 +270,9 @@ def network_model(N_tier_real, N_stack_real, N_tile,N_tier,computing_data,placem
 
     working_channel=2 # last layer source to dst paths
     #3d noc edges links
-    links_topology_2d=(math.sqrt(N_tile)-1)*math.sqrt(N_tile)*2*chiplet_num
-    links_topology_3d=N_tile*(chiplet_num-1)
+    edge_equivalent = math.sqrt(max_capacity) if max_capacity else 0
+    links_topology_2d=(edge_equivalent-1)*edge_equivalent*2*chiplet_num if edge_equivalent else 0
+    links_topology_3d=max_capacity*(chiplet_num-1)
     
     L_2_5d=0
     L_booksim_3d=0
@@ -281,7 +318,8 @@ def network_model(N_tier_real, N_stack_real, N_tile,N_tier,computing_data,placem
                     tier_total_2d_hop+=layer_HOP_2d[layer_index]
                     tier_total_3d_hop+=layer_HOP_3d[layer_index]
                 num_layer+=1
-            tier_2d_hop_list.append(tier_total_2d_hop/(num_layer)/N_tile)
+            tier_capacity_current = tier_capacity[(stack_index, i)] if (stack_index, i) in tier_capacity else max_capacity
+            tier_2d_hop_list.append(tier_total_2d_hop/(num_layer)/tier_capacity_current if tier_capacity_current else 0)
             tier_3d_hop_list.append(tier_total_3d_hop)
             tier_total_2d_hop=0
             tier_total_3d_hop=0
@@ -359,7 +397,7 @@ def network_model(N_tier_real, N_stack_real, N_tile,N_tier,computing_data,placem
     # 2.3 area of booksim
     wire_length_2d=2 #unit=mm\
     wire_pitch_2d=0.0045 #unit=mm
-    Num_routers=N_tile*sum(chiplet_num)
+    Num_routers=total_tile_capacity
 
     Total_area_routers=(single_router_area)*Num_routers
     Total_channel_area=wire_length_2d*wire_pitch_2d*W2d
