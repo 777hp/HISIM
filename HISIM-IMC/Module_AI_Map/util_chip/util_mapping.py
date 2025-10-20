@@ -1,10 +1,19 @@
-import csv,math,sys
+from __future__ import annotations
+
+import csv
+import math
+import sys
+from os import PathLike
+from typing import Mapping, Optional, Union
+
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.pyplot as plt
 
 import os
 import sys
+
+from Module_AI_Map.util_chip.layout import ChipletLayout
 
 # parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../HiSim'))
 # print(parent_dir)
@@ -13,9 +22,6 @@ import sys
 current_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(current_dir)
 target_file_path = os.path.join(parent_dir, 'AI_Networks')
-
-print("target: ", target_file_path)
-print("vit: ", f'{target_file_path}/GCN/VIT_base.csv')
 
 def smallest_square_greater_than(n):
     square_root = math.ceil(math.sqrt(n))
@@ -42,7 +48,20 @@ def load_ai_network(aimodel):
     
     return network_params
 
-def model_mapping(filename,placement_method,network_params,quant_act,xbar_size,N_crossbar,N_pe,quant_weight,N_tile,N_tier,N_stack):
+def model_mapping(
+    filename,
+    placement_method,
+    network_params,
+    quant_act,
+    xbar_size,
+    N_crossbar,
+    N_pe,
+    quant_weight,
+    N_tile,
+    N_tier,
+    N_stack,
+    layout: Optional[Union[ChipletLayout, Mapping[str, object], str, PathLike]] = None,
+):
     #---------------------------------------------------------------------#
 
     #         configuration of the AI models mapped to architecture
@@ -54,7 +73,31 @@ def model_mapping(filename,placement_method,network_params,quant_act,xbar_size,N
     total_number_layers=network_params.shape[0]
     tile_x_bit=xbar_size*math.sqrt(N_crossbar)*math.sqrt(N_pe)   #Total number of bits in a tile in x-dimension
     tile_y_bit=xbar_size*math.sqrt(N_crossbar)*math.sqrt(N_pe)   #Total number of bits in a tile in y-dimension
-    util_map_fn=util_map(N_tile=N_tile, placement_method=placement_method, N_tier=N_tier, N_stack=N_stack)
+    if isinstance(layout, ChipletLayout) or layout is None:
+        layout_obj = layout
+    elif isinstance(layout, Mapping):
+        layout_obj = ChipletLayout.from_dict(layout)
+    elif isinstance(layout, (str, PathLike)):
+        layout_obj = ChipletLayout.from_json(layout)
+    else:
+        raise TypeError(
+            "layout must be a ChipletLayout, mapping, or path to a JSON layout description"
+        )
+
+    if layout_obj is None:
+        layout_obj = ChipletLayout.uniform(
+            num_stacks=N_stack, num_tiers=N_tier, tiles_per_tier=N_tile
+        )
+
+    layout = layout_obj
+
+    util_map_fn = util_map(
+        N_tile=N_tile,
+        placement_method=placement_method,
+        N_tier=N_tier,
+        N_stack=N_stack,
+        layout=layout,
+    )
 
     # write the layer information data to csv file-HISIM Default Mapping
     with open(filename, 'w') as csvfile: 
@@ -118,31 +161,39 @@ def model_mapping(filename,placement_method,network_params,quant_act,xbar_size,N
             csvfile.write('\n')
     #import pdb;pdb.set_trace()
 
-    return util_map_fn.total_tiles_real, util_map_fn.tiles_each_tier, util_map_fn.tiles_each_stack
+    used_stack_count = util_map_fn.max_stack_index + 1
+    tiles_each_tier = [row[:] for row in util_map_fn.tiles_each_tier[:used_stack_count]]
+    tiles_each_stack = util_map_fn.tiles_each_stack[:used_stack_count]
+
+    return util_map_fn.total_tiles_real, tiles_each_tier, tiles_each_stack
 
 class util_map():
-    def __init__(self, N_tile,placement_method, N_tier, N_stack):
+    def __init__(self, N_tile,placement_method, N_tier, N_stack, layout: ChipletLayout):
         super(util_map, self).__init__()
-        self.N_tile = N_tile                                            
-        self.placement_method=placement_method                          
-        self.N_tier=N_tier     
-        self.N_stack=N_stack                                              
-        self.tiles_each_tier=[[0]*N_tier]  
-        self.tiles_each_stack=[0]                            
+        self.N_tile = N_tile
+        self.placement_method=placement_method
+        self.layout = layout
+        self.N_stack=self.layout.stack_count()
+        self.N_tier=self.layout.tier_count()
+        self.tiles_each_tier=[[0]*self.N_tier for _ in range(self.layout.stack_count())]
+        self.tiles_each_stack=[0 for _ in range(self.layout.stack_count())]
 
         #Initialize variables
         self.total_tiles_required=0
-        self.total_tiles_real=0                                              
+        self.total_tiles_real=0
         self.tier_index=0
         self.tier_index=0
         self.stack_index=0
         self.tiles_cumm_stack=0
         self.cumm_layer_stack=0
+        self.max_stack_index=0
     
     def forward(self, layer_num_tile, layer_idx):
 
         #Check if the required number of tiles for this layer are greater than the user-defined number of tiles in a tier/chiplet
-        if layer_num_tile>self.N_tile:
+        current_capacity = self.layout.tier_capacity(self.stack_index, self.tier_index)
+
+        if layer_num_tile>current_capacity:
             print("Alert!!!","layer",layer_idx,"mapped to multiple chiplet/tier")
             print("please increase crossbar size, PE number, or tile number")
             # sys.exit()
@@ -165,20 +216,19 @@ class util_map():
             while True:
                 if self.tier_index==0:
                     break
-                elif self.tiles_each_tier[self.stack_index][self.tier_index]+layer_num_tile>self.N_tile:
+                elif self.tiles_each_tier[self.stack_index][self.tier_index]+layer_num_tile>self.layout.tier_capacity(self.stack_index, self.tier_index):
                 #print(self.tier_index)
                     self.tier_index-=1
                 else:
                     break
             #print(self.tiles_each_tier[self.stack_index][self.tier_index]+layer_num_tile>self.N_tile, self.tiles_each_tier, self.N_tile, layer_num_tile)
             #Check if the number of tiles of a layer cannot fit on the remaining tiles on the corresponding tier/chiplet
-            if self.tiles_each_tier[self.stack_index][self.tier_index]+layer_num_tile>self.N_tile:
+            if self.tiles_each_tier[self.stack_index][self.tier_index]+layer_num_tile>self.layout.tier_capacity(self.stack_index, self.tier_index):
                 self.tiles_cumm_stack+=self.tiles_each_stack[self.stack_index]
                 self.cumm_layer_stack=layer_idx
                 if self.stack_index<self.N_stack-1:
                     self.stack_index+=1
-                    self.tiles_each_stack.append(0)
-                    self.tiles_each_tier.append([0]*self.N_tier)
+                    self.max_stack_index=max(self.max_stack_index, self.stack_index)
                     self.tier_index=0
                 else:
                     print("Alert!!!","No available stacks/tile/tiers")
@@ -195,12 +245,11 @@ class util_map():
             #Placement method 1: Tier/Chiplet Edge to Tier/Chiplet Edge connection
             total_tiles_required_layer=layer_num_tile
             #Map top tier/chiplet completely before proceeding to next tier/chiplet 
-            if self.tiles_each_tier[self.stack_index][self.tier_index]+layer_num_tile>self.N_tile:
-                total_tiles_required_layer=self.N_tile-self.tiles_each_tier[self.stack_index][self.tier_index]+layer_num_tile              #Count the total number of tiles required uptil this layer
+            if self.tiles_each_tier[self.stack_index][self.tier_index]+layer_num_tile>self.layout.tier_capacity(self.stack_index, self.tier_index):
+                total_tiles_required_layer=self.layout.tier_capacity(self.stack_index, self.tier_index)-self.tiles_each_tier[self.stack_index][self.tier_index]+layer_num_tile              #Count the total number of tiles required uptil this layer
                 if self.tier_index==self.N_tier-1:
                     self.stack_index+=1
-                    self.tiles_each_stack.append(0)
-                    self.tiles_each_tier.append([0]*self.N_tier)
+                    self.max_stack_index=max(self.max_stack_index, self.stack_index)
                     self.tier_index=0
                 else:
                     self.tier_index+=1                                    #Increment tier/chiplet index
