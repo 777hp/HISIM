@@ -6,7 +6,24 @@ import math
 import sys
 
 
-def compute_IMC_model(COMPUTE_VALIDATE,xbar_size,volt, freq_computing,quant_act, quant_weight, N_crossbar,N_pe,N_tier_real,N_stack_real,N_tile,result_list,result_dictionary, network_params, relu):
+def compute_IMC_model(
+    COMPUTE_VALIDATE,
+    xbar_size,
+    volt,
+    freq_computing,
+    quant_act,
+    quant_weight,
+    N_crossbar,
+    N_pe,
+    N_tier_real,
+    N_stack_real,
+    N_tile,
+    result_list,
+    result_dictionary,
+    network_params,
+    relu,
+    tiles_each_tier=None,
+):
     #Initialize variables
     total_model_L=0
     total_model_E_dynamic=0
@@ -64,9 +81,16 @@ def compute_IMC_model(COMPUTE_VALIDATE,xbar_size,volt, freq_computing,quant_act,
             #         Computing Area            #
             #-----------------------------------#
     area_single_tile=A_pe*N_pe*N_crossbar
-    total_tiles_area=N_stack_real*N_tier_real*N_tile*area_single_tile
+    if tiles_each_tier is not None and len(tiles_each_tier)>0:
+        total_tiles = sum(sum(tier_counts) for tier_counts in tiles_each_tier)
+        total_tiles_area=total_tiles*area_single_tile
+        tier_areas=[count*area_single_tile for stack in tiles_each_tier for count in stack if count>0]
+        avg_tier_area=sum(tier_areas)/len(tier_areas) if tier_areas else 0
+    else:
+        total_tiles_area=N_stack_real*N_tier_real*N_tile*area_single_tile
+        avg_tier_area=total_tiles_area/(N_stack_real*N_tier_real) if N_stack_real and N_tier_real else 0
     print("Total tiles area",round(total_tiles_area,5),"mm2")
-    print("Total tiles area each tier,",round(total_tiles_area/N_stack_real/N_tier_real,5),"mm2")
+    print("Total tiles area each tier,",round(avg_tier_area,5),"mm2")
     result_list.append(total_tiles_area*pow(10,6))
 
 
