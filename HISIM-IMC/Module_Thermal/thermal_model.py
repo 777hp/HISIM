@@ -189,8 +189,8 @@ def thermal_model(thermal,chip_architect,chiplet_num_list,N_tile,placement_metho
             area_aib=0
             area_emib=0
         else:
-            area_aib=sum(area_aib_l)/len(area_aib_l)
-            area_emib=sum(area_emib_l)/len(area_emib_l)
+            area_aib=sum(area_aib_l)/len(area_aib_l) if area_aib_l else 0
+            area_emib=sum(area_emib_l)/len(area_emib_l) if area_emib_l else 0
 
         
         #import pdb;pdb.set_trace()
@@ -201,12 +201,23 @@ def thermal_model(thermal,chip_architect,chiplet_num_list,N_tile,placement_metho
         #import pdb;pdb.set_trace()
         #power_tier_l   = [20]*case_H2_5D.Nstructure*case_H2_5D.N*case_H2_5D.N
         power_router_l = tier_2d_hop_list_power#[5]*case_H2_5D.Nstructure
-        if case_H2_5D.Nstructure   == 2: numofaib = 2;  numofemib = 1
-        elif case_H2_5D.Nstructure == 3: numofaib = 4;  numofemib = 2
-        elif case_H2_5D.Nstructure == 4: numofaib = 6;  numofemib = 3 #;power_aib_l+=[0,0]
-        elif case_H2_5D.Nstructure == 1: numofaib = 0;  numofemib = 0
+        # Default to the number of AIB/EMIB interfaces reported by the network model.
+        numofaib = len(power_aib_l)
+        numofemib = len(area_emib_l)
+        if case_H2_5D.Nstructure   == 2:
+            numofaib = 2
+            numofemib = 1
+        elif case_H2_5D.Nstructure == 3:
+            numofaib = 4
+            numofemib = 2
+        elif case_H2_5D.Nstructure == 4:
+            numofaib = 6
+            numofemib = 3  # ;power_aib_l+=[0,0]
+        elif case_H2_5D.Nstructure == 1:
+            numofaib = 0
+            numofemib = 0
 
-        
+
         #area- layer_aib_list[idx][0] -mm2, energy- layer_aib_list[idx][1] -pJ, latency-layer_aib_list[idx][2]-ns
         #power_aib_l    = [5]*numofaib
         power_emib_l   = [0.0]*numofemib

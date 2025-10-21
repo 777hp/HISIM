@@ -298,7 +298,7 @@ if __name__ == "__main__":
 
     # Test Case 8
     print("Test Case 8: Running HISIM to obtain PPA and thermal")
-    print("AI Network: densenet121")
+    print("AI Network: vit")
     print("HW configuration (Xbar-Npe-Ntile-Ntier-Nstack-chip_arch):1024-36-81-1-2-2.5D")
     case8_kwargs = dict(
         chip_architect="H2_5D",
@@ -313,7 +313,7 @@ if __name__ == "__main__":
         percent_router=1,
         tsv_pitch=5,
         W2d=32,
-        ai_model="densenet121",
+        ai_model="vit",
         thermal=False,
         N_stack=2,
     )

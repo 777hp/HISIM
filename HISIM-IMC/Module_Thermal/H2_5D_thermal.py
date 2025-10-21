@@ -530,15 +530,17 @@ class H2_5D(object):
     #====================================================================================================
     def load_power_aib(self,power_aib_l,aib_shape, single_aib_size):
 
-            
-        if self.Nstructure==1: numofaib = 0
-        elif self.Nstructure==2: numofaib = 2
-        elif self.Nstructure==3: numofaib = 4
-        elif self.Nstructure==4: numofaib = 8
-        else: 
-            print('error')
-            exit()
-        assert len(power_aib_l)==numofaib
+
+        power_aib_l = list(power_aib_l)
+        expected = {1: 0, 2: 2, 3: 4, 4: 8}.get(self.Nstructure)
+        if expected is not None and expected > len(power_aib_l):
+            power_aib_l.extend([0.0] * (expected - len(power_aib_l)))
+        if power_aib_l:
+            numofaib = len(power_aib_l)
+        else:
+            numofaib = expected if expected is not None else 0
+        if expected is not None and len(power_aib_l) not in (0, expected):
+            numofaib = len(power_aib_l)
         power_ptr = 0
         power_container= []
 
@@ -588,14 +590,16 @@ class H2_5D(object):
 
     #====================================================================================================
     def load_power_emib(self,power_emib_l,emib_shape, single_emib_size, aib_shape, single_aib_size):
-        if self.Nstructure==1: numofemib = 0
-        elif self.Nstructure==2: numofemib = 1
-        elif self.Nstructure==3: numofemib = 2
-        elif self.Nstructure==4: numofemib = 4
-        else: 
-            print('error')
-            exit()
-        assert len(power_emib_l)==numofemib
+        power_emib_l = list(power_emib_l)
+        expected = {1: 0, 2: 1, 3: 2, 4: 4}.get(self.Nstructure)
+        if expected is not None and expected > len(power_emib_l):
+            power_emib_l.extend([0.0] * (expected - len(power_emib_l)))
+        if power_emib_l:
+            numofemib = len(power_emib_l)
+        else:
+            numofemib = expected if expected is not None else 0
+        if expected is not None and len(power_emib_l) not in (0, expected):
+            numofemib = len(power_emib_l)
 
         power_ptr = 0
         power_container_center= []
